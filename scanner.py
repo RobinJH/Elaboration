@@ -6,9 +6,6 @@
 # PackageNames with '.' in them are currently assumed to by sub-packages
 # Subpackages get their 'with' clauses added to the parent package
 # 
-# TODO: Scan current folder and sub-folders to build a list of Ada packages
-# TODO: For each Ada package create a list of 'with'ed packages
-# TODO: Include sub-package 'with'ed packages with the parent
 # TODO: For each package check each 'with'ed package recursively to see if it returns to the original package
 
 import re                       # For regular expression usage
