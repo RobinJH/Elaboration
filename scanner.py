@@ -1,3 +1,4 @@
+#! /usr/bin/python
 
 #
 # Scan a set of Ada files and look for circular dependencies
@@ -7,26 +8,29 @@
 # PackageNames with '.' in them are currently assumed to by sub-packages
 # Subpackages get their 'with' clauses added to the parent package
 #
-# There is no list of standard packages to ignore as they should not exists in the files
-# being searched and will therefore not appear in the list of files that need to be checked
 # 
 # TODO: Handling of child packages, should they be elaborated as part of the main package?
 
 import re                       # For regular expression usage
+import functools
 
 from collections import deque   # Use a deque for with stack
 from pathlib import Path        # To allow easy access to folders and files
 
+# Override print to always flush
+print = functools.partial(print, flush=True)
+
 # Constants
-IGNORE = [r".git", r".vscode"]  # List of directories to ignore
+IGNORE = [r".git", r".vscode", r"build"]  # List of directories to ignore, all files/directories are lower case
+STANDARD_PACKAGES = [r"ada", r"system", r"gnat"]    # List of standard tope level packages that may have child packages
 
 # Regular expression used, as they should be cached and there aren't many they haven't been compiled
 # Putting them here will make it easy to create compiled versions if needed
-RE_ADA_FILE = r"\.?[12]?\.ad[abs]$"                 # Regular expression to match Ada files
+RE_ADA_FILE = r"(\.[12])?\.ad[abs]$"                # Regular expression to match Ada files
 RE_ROOT_PACKAGE_NAME = r"^(\w+)[\.\-]?"             # Regular expression to extract the root package name from a filename
-RE_FULL_PACKAGE_NAME = r"^(.*?)\.?[12]?\.ad[abs]$"  # Regular expression to get a full package name from the filename
+RE_FULL_PACKAGE_NAME = r"^(.*?)(\.[12])?\.ad[abs]$" # Regular expression to get a full package name from the filename
 RE_WITH_PACKAGE_NAME = r"^\s*with\s+([\w\.*]+)"     # Regular expression to extract a with'd package name from a source file
-RE_WITH_CHILD_PACKAGE = r"\."                       # Regular expression to detect the with of a child package
+RE_WITH_CHILD_PACKAGE = r"(\s*)\."                  # Regular expression to detect the with of a child package
 RE_SEPARATE = r"^\s*separate\s*\("                  # Regular expression to detect a separate statement
 
 # Global Data
@@ -59,10 +63,14 @@ def parseFile(f):
             if match:
                 withMatch = match.group(1)
                 # If this looks like with'ing a child package then output a warning
-                if re.search(RE_WITH_CHILD_PACKAGE, withMatch):
+                childMatch = re.search(RE_WITH_CHILD_PACKAGE, withMatch)
+                childRoot = ""
+                if childMatch:
                     print("+++ Possible child package included in {} ({})".format(f.name, withMatch))
+                    childRoot = childMatch.group(1)
                 # Only add the package if it is not already in the list
-                if withList.count(withMatch) == 0:
+                if withList.count(withMatch) == 0 \
+                    and not childRoot in STANDARD_PACKAGES:
                     withList.append(withMatch)
                 
             # Look for a separate statement
@@ -142,6 +150,9 @@ def parseWiths(start):
     Input: start the package to start from
     """
 
+    if len(withStack) == 4:
+        print("*** Current Stack {}".format(withStack))
+
     # Only process the start point if it has withs
     if start in withData:
         for withs in withData[start]:
@@ -155,9 +166,12 @@ def parseWiths(start):
             else:
                 # New with so add it to the stack and recurse into it, 
                 # when it returns remove with from stack as it has been processed
-                withStack.append(withs)
-                parseWiths(withs)
-                withStack.pop()
+                # Only do this if the with'd package has withs itself
+                if withs in withData:
+                    withStack.append(withs)
+                    parseWiths(withs)
+                    withStack.pop()
+                    withData[withs] = []        # Clear the entry for this package so we son't go through it again, and again ...
 
 #
 # Main program when run
@@ -168,23 +182,37 @@ if __name__ == "__main__":
 
     # Build the dictionary of packages and what they include
     parseDir(cwd)
+    print("--- Built dictionary of withs")
+    
+    # Remove any entries that have no withs
+    deleteList = []
+    for key in withData:
+        if len(withData[key]) == 0:
+            deleteList.append(key)
+    for key in deleteList:
+        del withData[key]
+    print("--- Removed empty with lists")
 
     # Check the with lists to see if it includes any child packages
     for key in withData:
         for data in withData[key]:
             if re.search(RE_WITH_CHILD_PACKAGE, data):
                 print("+++ Child package found {} includes {}".format(key, data))
-
+    print("--- Checked for child packages")
+                
     for key in withData:
         print("--- {} => {}".format(key, withData[key]))
-
+    print("--- End of with dump")
+    
     # Iterate over each package, using it as the start point looking for a loop
-    for key in withData:
+    for key in withData.keys():
         print("--- Checking {} for circularity".format(key))
         # Clear the stack and start it with the first package
         withStack.clear()
         withStack.append(key)
         parseWiths(key)
+        withData[key]=[]            # Clear entry as it has now been processed
+    print("--- Completed checks for circularity")
 
     # Tidy up the circularity list
     # Remove stacks that don't start and end with the same package
@@ -194,7 +222,8 @@ if __name__ == "__main__":
         cs.appendleft(start)
         if cs.count(start) < 2:
             circularStacks.remove(cs)
-
+    print("--- Tidy circularity lists (part 1)")
+    
     # Remove stacks that are the same circularity
     # This is done by removing the end point (which is the same as the start), 
     # the remaining items them form the sequence of withs without returning to a start point. 
@@ -216,10 +245,10 @@ if __name__ == "__main__":
         start = cs.popleft()
         cs.appendleft(start)
         cs.append(start)
-
-
+    print("--- Tidy circularity lists (part 2)")
 
     for cs in circularStacks:
         print("--- Circular Withs {}".format(list(cs)))
 
+    print("--- Program End")
             
