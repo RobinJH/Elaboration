@@ -8,11 +8,18 @@
 # PackageNames with '.' in them are currently assumed to by sub-packages
 # Subpackages get their 'with' clauses added to the parent package
 #
-# 
-# TODO: Handling of child packages, should they be elaborated as part of the main package?
 
 import re                       # For regular expression usage
 import functools
+import json                     # To store data on disk for analysis
+
+# Write a json file
+# with open("circular.json", "w") as f:
+#    json.dump(circularStacks, f)
+
+# To read back
+# with open("circular.json", "r") as f:
+#    circularStacks = json.load(f)
 
 from collections import deque   # Use a deque for with stack
 from pathlib import Path        # To allow easy access to folders and files
@@ -150,19 +157,24 @@ def parseWiths(start):
     Input: start the package to start from
     """
 
-    if len(withStack) == 4:
+    if "usr_conf_contribution" in withStack:
         print("*** Current Stack {}".format(withStack))
+
+    
 
     # Only process the start point if it has withs
     if start in withData:
         for withs in withData[start]:
-            if withStack.count(withs) > 0:
+            if withs in withStack:
                 # This with package is already in the stack, copy the current stack and add it to the list of circular stacks
-                newStack = deque(withStack)
-                # Add the current one to make it circular
-                newStack.append(withs)
-                circularStacks.append(newStack)
-                # Don't descend into this with as that way leads to madness
+                # Only store the stack if the first element is the same as withs
+                if withs == withStack[0]:
+                    newStack = deque(withStack)
+                    # Add the current one to make it circular
+                    newStack.append(withs)
+                    circularStacks.append(newStack)
+                    print("--- Circular Stack -> {}".format(newStack))
+                    # Don't descend into this with as that way leads to madness
             else:
                 # New with so add it to the stack and recurse into it, 
                 # when it returns remove with from stack as it has been processed
@@ -171,7 +183,6 @@ def parseWiths(start):
                     withStack.append(withs)
                     parseWiths(withs)
                     withStack.pop()
-                    withData[withs] = []        # Clear the entry for this package so we son't go through it again, and again ...
 
 #
 # Main program when run
@@ -193,6 +204,9 @@ if __name__ == "__main__":
         del withData[key]
     print("--- Removed empty with lists")
 
+    with open("withs.json", "w") as f:
+        json.dump(withData, f)
+
     # Check the with lists to see if it includes any child packages
     for key in withData:
         for data in withData[key]:
@@ -213,6 +227,9 @@ if __name__ == "__main__":
         parseWiths(key)
         withData[key]=[]            # Clear entry as it has now been processed
     print("--- Completed checks for circularity")
+
+    with open("circular.json", "w") as f:
+        json.dump(circularStacks, f)
 
     # Tidy up the circularity list
     # Remove stacks that don't start and end with the same package
