@@ -29,7 +29,8 @@ print = functools.partial(print, flush=True)
 
 # Constants
 IGNORE = [r".git", r".vscode", r"build"]  # List of directories to ignore, all files/directories are lower case
-STANDARD_PACKAGES = [r"ada", r"system", r"gnat"]    # List of standard tope level packages that may have child packages
+STANDARD_PACKAGES = [r"ada", r"system", r"gnat", r"unchecked_deallocation", r"text_io"
+                    ]    # List of standard packages and top level packages that may have child packages
 
 # Regular expression used, as they should be cached and there aren't many they haven't been compiled
 # Putting them here will make it easy to create compiled versions if needed
@@ -37,7 +38,7 @@ RE_ADA_FILE = r"(\.[12])?\.ad[abs]$"                # Regular expression to matc
 RE_ROOT_PACKAGE_NAME = r"^(\w+)[\.\-]?"             # Regular expression to extract the root package name from a filename
 RE_FULL_PACKAGE_NAME = r"^(.*?)(\.[12])?\.ad[abs]$" # Regular expression to get a full package name from the filename
 RE_WITH_PACKAGE_NAME = r"^\s*with\s+([\w\.*]+)"     # Regular expression to extract a with'd package name from a source file
-RE_WITH_CHILD_PACKAGE = r"(\s*)\."                  # Regular expression to detect the with of a child package
+RE_WITH_CHILD_PACKAGE = r"(\w*)\."                  # Regular expression to detect the with of a child package
 RE_SEPARATE = r"^\s*separate\s*\("                  # Regular expression to detect a separate statement
 
 # Global Data
@@ -76,8 +77,9 @@ def parseFile(f):
                     print("+++ Possible child package included in {} ({})".format(f.name, withMatch))
                     childRoot = childMatch.group(1)
                 # Only add the package if it is not already in the list
-                if withList.count(withMatch) == 0 \
-                    and not childRoot in STANDARD_PACKAGES:
+                if not withMatch in withList \
+                    and not childRoot in STANDARD_PACKAGES \
+                    and not withMatch in STANDARD_PACKAGES:
                     withList.append(withMatch)
                 
             # Look for a separate statement
@@ -205,7 +207,7 @@ if __name__ == "__main__":
     print("--- Removed empty with lists")
 
     with open("withs.json", "w") as f:
-        json.dump(withData, f)
+        json.dump(withData, f, indent=4, sort_keys=True)
 
     # Check the with lists to see if it includes any child packages
     for key in withData:
