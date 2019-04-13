@@ -15,6 +15,7 @@ import logging                  # Handle the output
 
 from collections import deque   # Use a deque for with stack
 from pathlib import Path        # To allow easy access to folders and files
+from operator import itemgetter # Allow to sort on element of list
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ def build_with_dictionary(cwd):
             with_data[package] = withs_list
 
 
-    def parse_dir(cwd):
+    def recursive_parse_dir(cwd):
         """
         Parse a directory of files
 
@@ -158,15 +159,15 @@ def build_with_dictionary(cwd):
             if f.is_dir():
                 # If we get a directory then recurse into it, unless it is to be ignored
                 if not f.name.lower() in Lists.IGNORE:
-                    parse_dir(f)
+                    recursive_parse_dir(f)
             else:
                 # Got a file, but is it an Ada file?
                 if re.search(RegularExpressions.RE_ADA_FILE, f.suffix.lower()):
                     parse_ada_file(f)
 
 
-    # Build the dictionary of packages and what they include
-    parse_dir(cwd)
+    # Build the dictionary of packages and what they with
+    recursive_parse_dir(cwd)
     logger.info("--- Built dictionary of withs")
 
     # Remove any entries that have no withs
@@ -179,18 +180,6 @@ def build_with_dictionary(cwd):
     logger.info("--- Removed empty with lists")
 
     return with_data
-
-
-def save_withs(with_data):
-    """ Save the with data dictionary to 'withs.json' """
-    with open("withs.json", "w") as f:
-        json.dump(with_data, f, indent=4, sort_keys=True)
-
-def load_withs():
-    """ Load the with data dictionary from 'withs.json' """
-    with open("withs.json", "r") as f:
-        return json.load(f)
-
 
 def parse_withs(start, with_data):
     """
@@ -216,10 +205,12 @@ def parse_withs(start, with_data):
             for withs in with_data[start]:
                 if withs in with_stack:
                     # This with package is already in the stack, copy the current stack and add it to the list of circular stacks
-                    # Only store the stack if the first element is the same as withs
-                    if withs == with_stack[0]:
+                    if withs in with_stack:
                         newStack = deque(with_stack)
+                        while newStack.popleft() != withs:
+                            pass
                         # Add the current one to make it circular
+                        newStack.appendleft(withs)
                         newStack.append(withs)
                         circular_stacks.append(newStack)
                         logger.info("--- Circular Stack -> {}".format(newStack))
@@ -229,10 +220,14 @@ def parse_withs(start, with_data):
                     # when it returns remove with from stack as it has been processed
                     # Only do this if the with'd package has withs itself
                     if withs in with_data:
-                        with_stack.append(withs)
-                        logger.debug("=== Checking stack -> {}".format(with_stack))
-                        recursive_parse_withs(withs)
-                        with_stack.pop()
+                        if len(with_data[withs]) > 0:
+                            with_stack.append(withs)
+                            logger.debug("=== Checking stack -> {}".format(with_stack))
+                            recursive_parse_withs(withs)
+                            done = with_stack.pop()
+                            # Remove completed package to prevent going through it again
+                            with_data[done] = []
+                            logger.debug("=== Removing calls from {}".format(done))
 
 
     # Start the stack with the first package
@@ -257,7 +252,8 @@ def scan(cwd):
 
     with_data = build_with_dictionary(start_dir)
 
-    save_withs(with_data)
+    with open("withs.json", "w") as f:
+        json.dump(with_data, f, indent=4, sort_keys=True)
 
     # Check the with lists to see if it includes any child packages
     for key, value in with_data.items():
@@ -277,8 +273,14 @@ def scan(cwd):
         with_data[key] = []            # Clear entry as it has now been processed
     logger.info("--- Completed checks for circularity")
 
-    with open("circular.json", "w") as f:
-        json.dump(circular_stacks, f)
+    with open("raw_circular.json", "w") as f:
+        # Convert the list of deque to a list of lists which can be handled by the json package
+        temp = []
+        for d in circular_stacks:
+            temp.append(list(d))
+        json.dump(temp, f, indent=4, sort_keys=True)
+
+    # Not sure any of this tidying up is needed, as circular paths are removed when found
 
     # Tidy up the circularity list
     # Remove stacks that don't start and end with the same package
@@ -309,10 +311,17 @@ def scan(cwd):
         cs.append(cs[0])
     logger.info("--- Tidy circularity lists (part 2)")
 
+    # Convert to a simple list of lists
+    temp = []
+    for cs in circular_stacks:
+        temp.append(list(cs))
+
+    # Save back as an ordered list of lists
+    circular_stacks = sorted(temp, key=itemgetter(0))
+
+    # List the circular stacks in order
     for cs in circular_stacks:
         logger.info("--- Circular Withs {}".format(list(cs)))
-
-    logger.info("--- Program End")
 
     return circular_stacks
 
@@ -320,4 +329,9 @@ def scan(cwd):
 # Main program when run
 #
 if __name__ == "__main__":
-    scan(Path.cwd())
+    c = scan(Path.cwd())
+
+    with open("circular.json", "w") as f:
+        json.dump(c, f, indent=4, sort_keys=True)
+
+    print("Number circular paths found = {}".format(len(c)))
