@@ -246,6 +246,16 @@ def scan(cwd):
     with_data = {}                   # Dictionary to hold the lookup of package names and the packages they with
     circular_stacks = []             # List of circular stacks
 
+    def is_equal(left, right):
+        result = len(left) == len(right)
+        if result:
+            for l, r in zip(left, right):
+                result = l == r
+                if not result:
+                    break
+        return result
+
+
     start_dir = Path(cwd)
 
     logger.info("--- Starting directory = {}".format(start_dir))
@@ -292,7 +302,7 @@ def scan(cwd):
 
     # Remove stacks that are the same circularity
     # This is done by removing the end point (which is the same as the start),
-    # the remaining items them form the sequence of withs without returning to a start point.
+    # the remaining items then form the sequence of withs without returning to a start point.
     # By rotating these and comparing with other stacks identical loops can be removed
     # At the end replace the end item to keep the circularity
     for cs in circular_stacks:
@@ -304,9 +314,16 @@ def scan(cwd):
             else:
                 for _ in range(1, len(ts)+1):
                     ts.rotate(1)
-                    if cs == ts:
+                    if is_equal(cs, ts):
                         circular_stacks.remove(ts)
                         break
+    for cs in circular_stacks:
+        fw = cs[0]
+        for w in cs:
+            if w < fw:
+                fw = w
+        while cs[0] != fw:
+            cs.rotate(1)
     for cs in circular_stacks:
         cs.append(cs[0])
     logger.info("--- Tidy circularity lists (part 2)")
@@ -317,6 +334,7 @@ def scan(cwd):
         temp.append(list(cs))
 
     # Save back as an ordered list of lists
+    temp = sorted(temp, key=lambda k: len(k))
     circular_stacks = sorted(temp, key=itemgetter(0))
 
     # List the circular stacks in order
