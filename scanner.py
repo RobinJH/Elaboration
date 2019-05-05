@@ -9,63 +9,48 @@
 # Subpackages get their 'with' clauses added to the parent package
 #
 
-import re                       # For regular expression usage
-import json                     # To store data on disk for analysis
-import logging                  # Handle the output
+import re  # For regular expression usage
+import json  # To store data on disk for analysis
+import logging  # Handle the output
 
-from collections import deque   # Use a deque for with stack
-from pathlib import Path        # To allow easy access to folders and files
-from operator import itemgetter # Allow to sort on element of list
+from collections import deque  # Use a deque for with stack
+from pathlib import Path  # To allow easy access to folders and files
+from operator import itemgetter  # Allow to sort on element of list
 
 logger = logging.getLogger(__name__)
 
 # Constants
-class Lists:
-    """
-    Lists of items to check against.
-
-    IGNORE => List of directory names (lowercase) to ignore when scaninng
-    STANDARD_PACKAGES => List of package names (lowercase) to ignore when they are with'd, these
-                         are either full package name or for child/sub packages they are the top
-                         level parent name. i.e. ada matches all ada.XXXX packages
-    """
-    IGNORE = [r".git", r".vscode", r"build"]  # List of directories to ignore, all files/directories are lower case
-    STANDARD_PACKAGES = [r"ada", r"system", r"gnat", r"unchecked_deallocation", r"text_io"
-                        ]    # List of standard packages and top level packages that may have child packages
+# List of directories to ignore, all files/directories are lower case
+IGNORE = [r".git", r".vscode", r"build"]
+# List of standard packages and top level packages that may have child packages
+STANDARD_PACKAGES = [r"ada", r"system", r"gnat", r"unchecked_deallocation", r"text_io"]
 
 
-class RegularExpressions:
-    """
-    Regular expressions used.
-
-    As they should be cached and there aren't many they haven't been compiled
-    Putting them here will make it easy to create compiled versions if needed
-
-    RE_ADA_FILE => Regular expression to match Ada files
-    RE_ROOT_PACKAGE_NAME => Regular expression to extract the root package name from a filename
-    RE_FULL_PACKAGE_NAME => Regular expression to get a full package name from the filename
-    RE_WITH_PACKAGE_NAME => Regular expression to extract a with'd package name from a source file
-    RE_WITH_CHILD_PACKAGE => Regular expression to detect the with of a child package
-    RE_SEPARATE => Regular expression to detect a separate statement
-    """
-    RE_ADA_FILE = r"(\.[12])?\.ad[abs]$"                # Regular expression to match Ada files
-    RE_ROOT_PACKAGE_NAME = r"^(\w+)[\.\-]?"             # Regular expression to extract the root package name from a filename
-    RE_FULL_PACKAGE_NAME = r"^(.*?)(\.[12])?\.ad[abs]$" # Regular expression to get a full package name from the filename
-    RE_WITH_PACKAGE_NAME = r"^\s*with\s+([\w\.*]+)"     # Regular expression to extract a with'd package name from a source file
-    RE_WITH_CHILD_PACKAGE = r"(\w*)\."                  # Regular expression to detect the with of a child package
-    RE_SEPARATE = r"^\s*separate\s*\("                  # Regular expression to detect a separate statement
+# Regular expression to match Ada files
+RE_ADA_FILE = r"(\.[12])?\.ad[abs]$"
+# Regular expression to extract the root package name from a filename
+RE_ROOT_PACKAGE_NAME = r"^(\w+)[\.\-]?"
+# Regular expression to get a full package name from the filename
+RE_FULL_PACKAGE_NAME = r"^(.*?)(\.[12])?\.ad[abs]$"
+# Regular expression to extract a with'd package name from a source file
+RE_WITH_PACKAGE_NAME = r"^\s*with\s+([\w\.*]+)"
+# Regular expression to detect the with of a child package
+RE_WITH_CHILD_PACKAGE = r"(\w*)\."
+# Regular expression to detect a separate statement
+RE_SEPARATE = r"^\s*separate\s*\("
 
 
 def build_with_dictionary(cwd):
     """
-    Build a dictionary indexed by Ada package name containing a list of packages they 'with'
+    Build a dictionary indexed by Ada package name containing a list of packages
+    they 'with'
 
     Input: cwd => Path object pointing to the directory to parse
     Return: Dictionary object
     """
 
     # Data used by the local functions
-    with_data = {}      # Dictionary populated by the recursive parse_dir function
+    with_data = {}  # Dictionary populated by the recursive parse_dir function
 
     def parse_file(f):
         """
@@ -78,7 +63,8 @@ def build_with_dictionary(cwd):
         Input: f => Path object pointing to the file to parse
         Output: tuple (withs_list, is_subunit)
             withs_list => List of with'd packages
-            is_subunit => Boolean True if this file is a sub-unit i.e. has a separate statement, otherwise False
+            is_subunit => Boolean True if this file is a sub-unit i.e. has a
+                          separate statement, otherwise False
         """
 
         withs_list = []
@@ -86,50 +72,54 @@ def build_with_dictionary(cwd):
 
         with open(f) as file:
             for line in file:
-                match = re.search(RegularExpressions.RE_WITH_PACKAGE_NAME, line.lower())
+                match = re.search(RE_WITH_PACKAGE_NAME, line.lower())
                 if match:
                     with_match = match.group(1)
                     # If this looks like with'ing a child package then output a warning
-                    child_match = re.search(RegularExpressions.RE_WITH_CHILD_PACKAGE, with_match)
+                    child_match = re.search(RE_WITH_CHILD_PACKAGE, with_match)
                     child_root = ""
                     if child_match:
-                        logger.warning("+++ Possible child package included in {} ({})".format(f.name, with_match))
+                        logger.warning(
+                            f"+++ Possible child package included in {f.name} ({with_match})"
+                        )
                         child_root = child_match.group(1)
                     # Only add the package if it is not already in the list
-                    if not with_match in withs_list \
-                        and not child_root in Lists.STANDARD_PACKAGES \
-                        and not with_match in Lists.STANDARD_PACKAGES:
+                    if (
+                        not with_match in withs_list
+                        and not child_root in STANDARD_PACKAGES
+                        and not with_match in STANDARD_PACKAGES
+                    ):
                         withs_list.append(with_match)
 
                 # Look for a separate statement
-                if re.search(RegularExpressions.RE_SEPARATE, line.lower()):
+                if re.search(RE_SEPARATE, line.lower()):
                     is_subunit = True
-                    break       # If we get to a separate statement then the context has finished
+                    break  # If we get to a separate statement then the context has finished
 
         return withs_list, is_subunit
-
 
     def parse_ada_file(f):
         """
         Extract information about the file
 
-        The Ada file will be examined and an entry made/updated in the with_data for the package related to the file
-        Each with'd package will be added to the list except if it matches the source package or is already in the list
+        The Ada file will be examined and an entry made/updated in the with_data
+        for the package related to the file
+        Each with'd package will be added to the list except if it matches the
+        source package or is already in the list
         All package names are lower cased
 
         Input: f => Path object pointing to the file to parse
         Returns: None
-
         """
 
         # Got an Ada file so extract the package name from the filename
-        package = re.search(RegularExpressions.RE_FULL_PACKAGE_NAME, f.name.lower()).group(1)
-        logger.info("--- Parsing file {} Package = {}".format(f.name, package))
+        package = re.search(RE_FULL_PACKAGE_NAME, f.name.lower()).group(1)
+        logger.info(f"--- Parsing file {f.name} Package = {package}")
 
         withs_list, is_subunit = parse_file(f)
         if is_subunit:
             # For subunits add the withs to the parent package
-            package = re.search(RegularExpressions.RE_ROOT_PACKAGE_NAME, f.stem.lower()).group(1)
+            package = re.search(RE_ROOT_PACKAGE_NAME, f.stem.lower()).group(1)
         if package in withs_list:
             withs_list.remove(package)
 
@@ -139,7 +129,6 @@ def build_with_dictionary(cwd):
                     with_data[package].append(w)
         else:
             with_data[package] = withs_list
-
 
     def recursive_parse_dir(cwd):
         """
@@ -153,18 +142,17 @@ def build_with_dictionary(cwd):
         Returns: None
         """
 
-        logger.info("--- Parsing directory {}".format(cwd.name))
+        logger.info(f"--- Parsing directory {cwd.name}")
 
         for f in cwd.iterdir():
             if f.is_dir():
                 # If we get a directory then recurse into it, unless it is to be ignored
-                if not f.name.lower() in Lists.IGNORE:
+                if not f.name.lower() in IGNORE:
                     recursive_parse_dir(f)
             else:
                 # Got a file, but is it an Ada file?
-                if re.search(RegularExpressions.RE_ADA_FILE, f.suffix.lower()):
+                if re.search(RE_ADA_FILE, f.suffix.lower()):
                     parse_ada_file(f)
-
 
     # Build the dictionary of packages and what they with
     recursive_parse_dir(cwd)
@@ -181,6 +169,7 @@ def build_with_dictionary(cwd):
 
     return with_data
 
+
 def parse_withs(start, with_data):
     """
         Parse the with_data
@@ -190,8 +179,9 @@ def parse_withs(start, with_data):
         Return: list of circular with stacks
     """
 
-    with_stack = deque()             # deque to hold the current state of with'd units as they are processed
-    circular_stacks = []             # List of circular stacks
+    # deque to hold the current state of with'd units as they are processed
+    with_stack = deque()
+    circular_stacks = []  # List of circular stacks
 
     def recursive_parse_withs(start):
         """
@@ -204,7 +194,8 @@ def parse_withs(start, with_data):
         if start in with_data:
             for withs in with_data[start]:
                 if withs in with_stack:
-                    # This with package is already in the stack, copy the current stack and add it to the list of circular stacks
+                    # This with package is already in the stack,
+                    # copy the current stack and add it to the list of circular stacks
                     if withs in with_stack:
                         newStack = deque(with_stack)
                         while newStack.popleft() != withs:
@@ -213,7 +204,7 @@ def parse_withs(start, with_data):
                         newStack.appendleft(withs)
                         newStack.append(withs)
                         circular_stacks.append(newStack)
-                        logger.info("--- Circular Stack -> {}".format(newStack))
+                        logger.info(f"--- Circular Stack -> {newStack}")
                         # Don't descend into this with as that way leads to madness
                 else:
                     # New with so add it to the stack and recurse into it,
@@ -222,19 +213,19 @@ def parse_withs(start, with_data):
                     if withs in with_data:
                         if len(with_data[withs]) > 0:
                             with_stack.append(withs)
-                            logger.debug("=== Checking stack -> {}".format(with_stack))
+                            logger.debug(f"=== Checking stack -> {with_stack}")
                             recursive_parse_withs(withs)
                             done = with_stack.pop()
                             # Remove completed package to prevent going through it again
                             with_data[done] = []
-                            logger.debug("=== Removing calls from {}".format(done))
-
+                            logger.debug(f"=== Removing calls from {done}")
 
     # Start the stack with the first package
     with_stack.append(start)
     recursive_parse_withs(start)
 
     return circular_stacks
+
 
 def scan(cwd):
     """
@@ -243,8 +234,9 @@ def scan(cwd):
     Input: Location to start scanning, used to create a Path object
     Return: A list of circular dependencies
     """
-    with_data = {}                   # Dictionary to hold the lookup of package names and the packages they with
-    circular_stacks = []             # List of circular stacks
+    # Dictionary to hold the lookup of package names and the packages they with
+    with_data = {}
+    circular_stacks = []  # List of circular stacks
 
     def is_equal(left, right):
         result = len(left) == len(right)
@@ -255,10 +247,9 @@ def scan(cwd):
                     break
         return result
 
-
     start_dir = Path(cwd)
 
-    logger.info("--- Starting directory = {}".format(start_dir))
+    logger.info(f"--- Starting directory = {start_dir}")
 
     with_data = build_with_dictionary(start_dir)
 
@@ -268,19 +259,19 @@ def scan(cwd):
     # Check the with lists to see if it includes any child packages
     for key, value in with_data.items():
         for data in value:
-            if re.search(RegularExpressions.RE_WITH_CHILD_PACKAGE, data):
-                logger.warning("+++ Child package found {} includes {}".format(key, data))
+            if re.search(RE_WITH_CHILD_PACKAGE, data):
+                logger.warning(f"+++ Child package found {key} includes {data}")
     logger.info("--- Checked for child packages")
 
     for key, value in with_data.items():
-        logger.debug("=== {} => {}".format(key, value))
+        logger.debug(f"=== {key} => {value}")
     logger.debug("=== End of with dump")
 
     # Iterate over each package, using it as the start point looking for a loop
     for key in with_data.keys():
-        logger.info("--- Checking {} for circularity".format(key))
+        logger.info(f"--- Checking {key} for circularity")
         circular_stacks.extend(parse_withs(key, with_data))
-        with_data[key] = []            # Clear entry as it has now been processed
+        with_data[key] = []  # Clear entry as it has now been processed
     logger.info("--- Completed checks for circularity")
 
     with open("raw_circular.json", "w") as f:
@@ -312,7 +303,7 @@ def scan(cwd):
             if cs == ts:
                 continue
             else:
-                for _ in range(1, len(ts)+1):
+                for _ in range(1, len(ts) + 1):
                     ts.rotate(1)
                     if is_equal(cs, ts):
                         circular_stacks.remove(ts)
@@ -339,7 +330,7 @@ def scan(cwd):
 
     # List the circular stacks in order
     for cs in circular_stacks:
-        logger.info("--- Circular Withs {}".format(list(cs)))
+        logger.info(f"--- Circular Withs {list(cs)}")
 
     return circular_stacks
 
@@ -352,4 +343,4 @@ if __name__ == "__main__":
     with open("circular.json", "w") as f:
         json.dump(c, f, indent=4, sort_keys=True)
 
-    print("Number circular paths found = {}".format(len(c)))
+    print(f"Number circular paths found = {len(c)}")

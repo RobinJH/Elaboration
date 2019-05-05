@@ -1,9 +1,9 @@
 
 # Directories
-
-.vscode/*
-testFiles/*
-__pycache__/*
+venv
+.vscode
+testFiles
+__pycache__
 
 # Files
 *.json
